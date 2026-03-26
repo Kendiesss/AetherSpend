@@ -23,10 +23,16 @@ export default function ReceiptUpload({ onProcessed }: ReceiptUploadProps) {
     try {
       const reader = new FileReader();
       reader.onload = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        const data = await processReceipt(base64, file.type);
-        onProcessed(data);
-        setIsProcessing(false);
+        try {
+          const base64 = (reader.result as string).split(',')[1];
+          const data = await processReceipt(base64, file.type);
+          onProcessed(data);
+          setIsProcessing(false);
+        } catch (err) {
+          console.error('Error processing receipt:', err);
+          setError('Failed to process receipt. Please try again.');
+          setIsProcessing(false);
+        }
       };
       reader.onerror = () => {
         setError('Failed to read file');

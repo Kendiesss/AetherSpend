@@ -2,8 +2,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { ReceiptData } from "../types";
 
 const getApiKey = () => {
+  // @ts-ignore
   const key = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-  return key === "undefined" ? "" : key;
+  return key === "undefined" || !key ? "" : key;
 };
 
 const ai = new GoogleGenAI({ apiKey: getApiKey() });
