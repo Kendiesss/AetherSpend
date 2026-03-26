@@ -9,7 +9,8 @@
         "email": { "type": "string", "format": "email", "description": "User email address" },
         "displayName": { "type": "string", "description": "User display name" },
         "photoURL": { "type": "string", "format": "uri", "description": "User profile photo URL" },
-        "role": { "type": "string", "enum": ["admin", "user"], "description": "User role" }
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User role" },
+        "lastActive": { "type": "string", "format": "date-time", "description": "Last time the user was active" }
       },
       "required": ["uid", "email"]
     },

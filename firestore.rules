@@ -75,12 +75,13 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role', 'lastActive']) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
              isValidEmail(data.email) &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 256)) &&
              (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1024)) &&
-             (data.role == 'user' || data.role == 'admin');
+             (data.role == 'user' || data.role == 'admin') &&
+             (!('lastActive' in data) || isValidDateString(data.lastActive));
     }
 
     function isValidTransaction(data) {

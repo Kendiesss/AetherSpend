@@ -22,6 +22,7 @@ export interface UserProfile {
   displayName?: string;
   photoURL?: string;
   role?: 'admin' | 'user';
+  lastActive?: string;
 }
 
 export interface ReceiptData {

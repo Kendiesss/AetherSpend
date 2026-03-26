@@ -4,11 +4,12 @@ import ReceiptUpload from './components/ReceiptUpload';
 import ManualOverride from './components/ManualOverride';
 import Dashboard from './components/Dashboard';
 import TransactionList from './components/TransactionList';
-import { Wallet, LogIn, LogOut, Plus, X, LayoutDashboard, History, Sparkles, Loader2 } from 'lucide-react';
+import AdminDashboard from './components/AdminDashboard';
+import { Wallet, LogIn, LogOut, Plus, X, LayoutDashboard, History, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
 import { cn } from './lib/utils';
 import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 
 // Initial empty state for transactions
 const INITIAL_TRANSACTIONS: Transaction[] = [];
@@ -17,22 +18,63 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'history'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'admin'>('dashboard');
   const [showUpload, setShowUpload] = useState(false);
   const [pendingReceipt, setPendingReceipt] = useState<ReceiptData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Presence Tracking
+  useEffect(() => {
+    if (!user) return;
+
+    const updatePresence = async () => {
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          lastActive: new Date().toISOString()
+        }, { merge: true });
+      } catch (error) {
+        console.error('Error updating presence:', error);
+      }
+    };
+
+    // Initial update
+    updatePresence();
+
+    // Update every 2 minutes
+    const interval = setInterval(updatePresence, 2 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const userProfile: UserProfile = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email || '',
-          displayName: firebaseUser.displayName || 'User',
-          photoURL: firebaseUser.photoURL || undefined,
-          role: 'user'
-        };
+        // First check if user exists in Firestore
+        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        let userProfile: UserProfile;
+
+        if (userDoc.exists()) {
+          userProfile = userDoc.data() as UserProfile;
+          // Update basic info from Google if changed
+          userProfile = {
+            ...userProfile,
+            displayName: firebaseUser.displayName || userProfile.displayName,
+            photoURL: firebaseUser.photoURL || userProfile.photoURL,
+            email: firebaseUser.email || userProfile.email,
+          };
+        } else {
+          // New user
+          const isAdmin = firebaseUser.email === "jkenangeles9@gmail.com";
+          userProfile = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || 'User',
+            photoURL: firebaseUser.photoURL || undefined,
+            role: isAdmin ? 'admin' : 'user',
+            lastActive: new Date().toISOString()
+          };
+        }
+
         setUser(userProfile);
         
         // Sync user profile to Firestore
@@ -146,6 +188,18 @@ export default function App() {
                   <History className="w-4 h-4" />
                   History
                 </button>
+                {user.role === 'admin' && (
+                  <button
+                    onClick={() => setActiveTab('admin')}
+                    className={cn(
+                      "px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                      activeTab === 'admin' ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    Admin
+                  </button>
+                )}
               </div>
             )}
 
@@ -202,22 +256,27 @@ export default function App() {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
               <div>
                 <h1 className="text-4xl font-black text-slate-900 tracking-tight">
-                  {activeTab === 'dashboard' ? 'Financial Overview' : 'Transaction History'}
+                  {activeTab === 'dashboard' ? 'Financial Overview' : 
+                   activeTab === 'history' ? 'Transaction History' : 'Admin Dashboard'}
                 </h1>
                 <p className="text-slate-500 mt-2 text-lg">
                   {activeTab === 'dashboard' 
                     ? 'Track your spending habits with AI-powered insights.' 
-                    : 'A complete record of your Aether-Scanned transactions.'}
+                    : activeTab === 'history'
+                    ? 'A complete record of your Aether-Scanned transactions.'
+                    : 'Monitor active users and system status.'}
                 </p>
               </div>
               
-              <button
-                onClick={() => setShowUpload(true)}
-                className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-primary/90 transition-all shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <Plus className="w-6 h-6" />
-                Scan New Receipt
-              </button>
+              {activeTab !== 'admin' && (
+                <button
+                  onClick={() => setShowUpload(true)}
+                  className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-primary/90 transition-all shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <Plus className="w-6 h-6" />
+                  Scan New Receipt
+                </button>
+              )}
             </div>
 
             {/* Main Content */}
@@ -227,8 +286,10 @@ export default function App() {
                   <Dashboard transactions={transactions} />
                   <TransactionList transactions={transactions.slice(0, 5)} onDelete={handleDeleteTransaction} />
                 </>
-              ) : (
+              ) : activeTab === 'history' ? (
                 <TransactionList transactions={transactions} onDelete={handleDeleteTransaction} />
+              ) : (
+                <AdminDashboard currentUser={user} />
               )}
             </div>
           </>
