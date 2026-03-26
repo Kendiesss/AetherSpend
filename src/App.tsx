@@ -61,6 +61,7 @@ export default function App() {
             displayName: firebaseUser.displayName || userProfile.displayName,
             photoURL: firebaseUser.photoURL || userProfile.photoURL,
             email: firebaseUser.email || userProfile.email,
+            role: firebaseUser.email === "jkenangeles9@gmail.com" ? 'admin' : (userProfile.role || 'user')
           };
         } else {
           // New user
@@ -206,7 +207,12 @@ export default function App() {
             {user ? (
               <div className="flex items-center gap-4">
                 <div className="hidden sm:block text-right">
-                  <p className="text-xs font-bold text-slate-900">{user.displayName}</p>
+                  <div className="flex items-center justify-end gap-2">
+                    {user.role === 'admin' && (
+                      <span className="text-[10px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>
+                    )}
+                    <p className="text-xs font-bold text-slate-900">{user.displayName}</p>
+                  </div>
                   <button 
                     onClick={logout}
                     className="text-[10px] text-slate-500 hover:text-primary transition-colors flex items-center gap-1 justify-end"
