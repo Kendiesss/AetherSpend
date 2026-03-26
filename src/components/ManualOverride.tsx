@@ -65,7 +65,7 @@ export default function ManualOverride({ data, onConfirm, onCancel }: ManualOver
             <input
               type="date"
               value={editedData.date.split('T')[0]}
-              onChange={(e) => handleChange('date', e.target.value)}
+              onChange={(e) => handleChange('date', e.target.value ? new Date(e.target.value).toISOString() : new Date().toISOString())}
               className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
             />
           </div>

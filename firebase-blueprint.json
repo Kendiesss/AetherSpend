@@ -24,6 +24,7 @@
         "amount": { "type": "number", "description": "Total transaction amount" },
         "category": { "type": "string", "enum": ["Groceries", "Dining", "Utilities", "Transport", "Health", "Shopping", "Entertainment", "Misc"], "description": "Spending category" },
         "date": { "type": "string", "format": "date-time", "description": "Transaction date" },
+        "imageUrl": { "type": "string", "format": "uri", "description": "Optional receipt image URL" },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the transaction was created" }
       },
       "required": ["id", "userId", "merchant", "amount", "category", "date", "createdAt"]

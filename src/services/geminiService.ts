@@ -15,7 +15,7 @@ export async function processReceipt(base64Image: string, mimeType: string): Pro
   const prompt = `Act as a financial data analyst. I will provide you with an image of a receipt. 
   Your job is to extract the Merchant Name, the Total Amount as a float, and the Category. 
   Choose the Category only from this list: [Groceries, Dining, Utilities, Transport, Health, Shopping, Entertainment, Misc]. 
-  Also extract the date of the transaction if available, otherwise use today's date.
+  Also extract the date of the transaction in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ) if available, otherwise use today's date in that format.
   Return the result strictly in JSON format.`;
 
   const response = await ai.models.generateContent({

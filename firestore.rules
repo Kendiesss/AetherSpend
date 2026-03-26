@@ -74,12 +74,14 @@ service cloud.firestore {
       return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role']) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
              isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 256)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1024)) &&
              (data.role == 'user' || data.role == 'admin');
     }
 
     function isValidTransaction(data) {
       let categories = ["Groceries", "Dining", "Utilities", "Transport", "Health", "Shopping", "Entertainment", "Misc"];
-      return hasOnlyAllowedFields(['id', 'userId', 'merchant', 'amount', 'category', 'date', 'createdAt']) &&
+      return hasOnlyAllowedFields(['id', 'userId', 'merchant', 'amount', 'category', 'date', 'imageUrl', 'createdAt']) &&
              data.id is string && data.id.size() > 0 && data.id.size() < 128 &&
              data.userId is string && data.userId == request.auth.uid &&
              data.merchant is string && data.merchant.size() > 0 && data.merchant.size() < 256 &&
