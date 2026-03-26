@@ -81,7 +81,7 @@ export default function Dashboard({ transactions }: DashboardProps) {
       <div className="md:col-span-2 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm min-h-[400px]">
         <h3 className="text-lg font-bold text-slate-900 mb-6">Spending by Category</h3>
         <div className="h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <PieChart>
               <Pie
                 data={categoryData}

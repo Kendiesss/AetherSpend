@@ -30,7 +30,8 @@ export default function App() {
           uid: firebaseUser.uid,
           email: firebaseUser.email || '',
           displayName: firebaseUser.displayName || 'User',
-          photoURL: firebaseUser.photoURL || undefined
+          photoURL: firebaseUser.photoURL || undefined,
+          role: 'user'
         };
         setUser(userProfile);
         
