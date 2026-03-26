@@ -79,7 +79,10 @@ export default function App() {
     const newTransaction: Transaction = {
       id: transactionId,
       userId: user.uid,
-      ...data,
+      merchant: data.merchant,
+      amount: data.amount,
+      category: data.category,
+      date: new Date(data.date).toISOString(),
       createdAt: new Date().toISOString()
     };
 

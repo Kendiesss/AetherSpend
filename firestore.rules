@@ -58,8 +58,12 @@ service cloud.firestore {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
     function isValidDateString(dateStr) {
-      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*$");
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -88,7 +92,8 @@ service cloud.firestore {
              data.amount is number && data.amount >= 0 &&
              data.category in categories &&
              isValidDateString(data.date) &&
-             isValidDateString(data.createdAt);
+             isValidDateString(data.createdAt) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && isValidUrl(data.imageUrl)));
     }
 
     // ===============================================================
