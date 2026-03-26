@@ -1,7 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ReceiptData } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const getApiKey = () => {
+  const key = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+  return key === "undefined" ? "" : key;
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 export async function processReceipt(base64Image: string, mimeType: string): Promise<ReceiptData> {
   const model = "gemini-3-flash-preview";
