@@ -147,6 +147,11 @@ export default function App() {
       return;
     }
 
+    if (user.uid === 'demo-guest-user') {
+      // In Guest mode, transactions remain stored in local state
+      return;
+    }
+
     const q = query(collection(db, 'transactions'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const txs = snapshot.docs.map(doc => doc.data() as Transaction);
@@ -307,8 +312,12 @@ export default function App() {
     };
 
     try {
-      // 1. Save to Firestore
-      await setDoc(doc(db, 'transactions', transactionId), newTransaction);
+      // 1. Save to Firestore (or local state in Guest mode)
+      if (user.uid === 'demo-guest-user') {
+        setTransactions(prev => [newTransaction, ...prev]);
+      } else {
+        await setDoc(doc(db, 'transactions', transactionId), newTransaction);
+      }
       setPendingReceipt(null);
       setShowUpload(false);
 
@@ -348,7 +357,11 @@ export default function App() {
 
   const handleDeleteTransaction = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'transactions', id));
+      if (user?.uid === 'demo-guest-user') {
+        setTransactions(prev => prev.filter(t => t.id !== id));
+      } else {
+        await deleteDoc(doc(db, 'transactions', id));
+      }
       setToast({ type: 'info', text: 'Transaction record deleted from archive.' });
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
