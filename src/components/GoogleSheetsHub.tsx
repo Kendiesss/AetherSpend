@@ -57,10 +57,17 @@ export default function GoogleSheetsHub({
     if (!token) {
       // Prompt user to re-authorize
       setStatusMessage({ type: 'info', text: 'Authorizing Google Workspace credentials...' });
-      const res = await signInWithGoogle();
-      token = getCachedAccessToken();
-      if (!token) {
-        throw new Error('Google Workspace authorization required to interact with Google Sheets.');
+      try {
+        await signInWithGoogle();
+        token = getCachedAccessToken();
+        if (!token) {
+          throw new Error('Google Workspace authorization required to interact with Google Sheets.');
+        }
+      } catch (err: any) {
+        if (err?.code === 'auth/unauthorized-domain' || (typeof err?.message === 'string' && err.message.includes('auth/unauthorized-domain'))) {
+          throw new Error(`Domain (${window.location.hostname}) not yet authorized in Firebase Console. Please add it to Firebase Auth settings.`);
+        }
+        throw err;
       }
     }
     return token;

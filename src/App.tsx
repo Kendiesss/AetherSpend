@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard';
 import TransactionList from './components/TransactionList';
 import AdminDashboard from './components/AdminDashboard';
 import GoogleSheetsHub from './components/GoogleSheetsHub';
+import DomainAuthModal from './components/DomainAuthModal';
 import { 
   Wallet, 
   LogIn, 
@@ -19,7 +20,9 @@ import {
   ShieldCheck,
   FileSpreadsheet,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  ShieldAlert,
+  Zap
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, getCachedAccessToken } from './firebase';
@@ -37,8 +40,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'admin'>('dashboard');
   const [showUpload, setShowUpload] = useState(false);
   const [showSheetsHub, setShowSheetsHub] = useState(false);
+  const [showDomainAuthModal, setShowDomainAuthModal] = useState(false);
   const [pendingReceipt, setPendingReceipt] = useState<ReceiptData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   // Document types & Google Sheets configuration state
   const [customDocumentTypes, setCustomDocumentTypes] = useState<string[]>([]);
@@ -152,6 +157,62 @@ export default function App() {
 
     return () => unsubscribe();
   }, [isAuthReady, user]);
+
+  // Handlers for Sign In
+  const handleSignIn = async () => {
+    setIsSigningIn(true);
+    try {
+      await signInWithGoogle();
+      setShowDomainAuthModal(false);
+      setToast({
+        type: 'success',
+        text: 'Google Authorization successful! Welcome to CyberSpend.'
+      });
+    } catch (err: any) {
+      console.error('Sign-in error details:', err);
+      const isUnauthorizedDomain = 
+        err?.code === 'auth/unauthorized-domain' || 
+        (typeof err?.message === 'string' && err.message.includes('auth/unauthorized-domain'));
+
+      if (isUnauthorizedDomain) {
+        setShowDomainAuthModal(true);
+        setToast({
+          type: 'error',
+          text: 'Firebase Auth requires this domain to be authorized in Firebase Console.'
+        });
+      } else if (err?.code === 'auth/popup-closed-by-user') {
+        setToast({
+          type: 'info',
+          text: 'Sign-in popup was closed.'
+        });
+      } else {
+        setToast({
+          type: 'error',
+          text: `Sign-in error: ${err?.message || 'Authentication failed'}`
+        });
+      }
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleDemoAccess = () => {
+    // Allows testing full receipt scanning and local archiving in case Firebase Auth domain is pending
+    const demoUser: UserProfile = {
+      uid: 'demo-guest-user',
+      displayName: 'Commander Guest',
+      email: 'guest@cyberspend.ai',
+      role: 'admin',
+      lastActive: new Date().toISOString(),
+      spreadsheetConfig: { autoSync: true },
+      customDocumentTypes: []
+    };
+    setUser(demoUser);
+    setToast({
+      type: 'info',
+      text: 'Entered in Guest Protocol mode. Full AI extraction and scanner operational!'
+    });
+  };
 
   const handleUpdateSpreadsheetConfig = async (newConfig: SpreadsheetConfig) => {
     setSpreadsheetConfig(newConfig);
@@ -414,10 +475,15 @@ export default function App() {
               </div>
             ) : (
               <button 
-                onClick={signInWithGoogle}
-                className="bg-cyberse-glow text-cyberse-bg px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-white transition-all shadow-[0_0_15px_rgba(0,242,255,0.3)] uppercase text-xs tracking-widest"
+                onClick={handleSignIn}
+                disabled={isSigningIn}
+                className="bg-cyberse-glow text-cyberse-bg px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-white transition-all shadow-[0_0_15px_rgba(0,242,255,0.3)] uppercase text-xs tracking-widest disabled:opacity-50"
               >
-                <LogIn className="w-4 h-4" />
+                {isSigningIn ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-cyberse-bg" />
+                ) : (
+                  <LogIn className="w-4 h-4" />
+                )}
                 Initialize
               </button>
             )}
@@ -427,21 +493,54 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-6 py-12">
         {!user ? (
-          <div className="text-center py-24 cyber-card border-cyberse-glow/10">
+          <div className="text-center py-20 px-6 cyber-card border-cyberse-glow/20 max-w-3xl mx-auto shadow-[0_0_50px_rgba(0,242,255,0.1)]">
             <div className="w-24 h-24 rounded-3xl bg-cyberse-glow/10 flex items-center justify-center mx-auto mb-8 border border-cyberse-glow/20 shadow-[0_0_30px_rgba(0,242,255,0.1)]">
               <Wallet className="w-12 h-12 text-cyberse-glow" />
             </div>
-            <h2 className="text-4xl font-black text-cyberse-text tracking-[0.3em] mb-4">Welcome to CyberSpend</h2>
-            <p className="text-cyberse-muted text-lg max-w-md mx-auto mb-12 font-light">
-              Authorize connection to scan receipts (OR, SI, etc.) and stream them directly into categorized Google Sheets tabs with high-tech AI extraction.
+            <h2 className="text-3xl md:text-4xl font-black text-cyberse-text tracking-[0.25em] mb-4 uppercase">
+              Welcome to CyberSpend
+            </h2>
+            <p className="text-cyberse-muted text-base max-w-lg mx-auto mb-10 font-light leading-relaxed">
+              Authorize Google connection to scan receipts (OR, SI, CR, etc.) with Gemini AI and automatically stream financial records directly into dedicated Google Sheets tabs.
             </p>
-            <button 
-              onClick={signInWithGoogle}
-              className="bg-cyberse-glow text-cyberse-bg px-12 py-5 rounded-2xl font-bold flex items-center gap-3 hover:bg-white transition-all shadow-[0_0_40px_rgba(0,242,255,0.3)] mx-auto text-xl uppercase tracking-widest"
-            >
-              <LogIn className="w-6 h-6" />
-              Access System
-            </button>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto mb-8">
+              <button 
+                onClick={handleSignIn}
+                disabled={isSigningIn}
+                className="w-full sm:w-auto flex-1 bg-cyberse-glow text-cyberse-bg px-8 py-4 rounded-xl font-black flex items-center justify-center gap-3 hover:bg-white transition-all shadow-[0_0_30px_rgba(0,242,255,0.3)] text-sm uppercase tracking-widest disabled:opacity-50"
+              >
+                {isSigningIn ? (
+                  <Loader2 className="w-5 h-5 animate-spin text-cyberse-bg" />
+                ) : (
+                  <LogIn className="w-5 h-5" />
+                )}
+                Sign In With Google
+              </button>
+
+              <button
+                onClick={handleDemoAccess}
+                className="w-full sm:w-auto px-6 py-4 rounded-xl font-black flex items-center justify-center gap-2 bg-cyberse-darker hover:bg-cyberse-dark text-cyberse-text border border-cyberse-glow/20 text-xs uppercase tracking-wider transition-all"
+                title="Bypass auth to test scanning and manual classification immediately"
+              >
+                <Zap className="w-4 h-4 text-cyberse-purple" />
+                Guest Mode
+              </button>
+            </div>
+
+            {/* Quick troubleshooting notice */}
+            <div className="pt-6 border-t border-cyberse-glow/10 flex items-center justify-center gap-2 text-xs text-cyberse-muted">
+              <ShieldAlert className="w-4 h-4 text-cyberse-glow shrink-0" />
+              <span>
+                Seeing domain authorization prompt?{' '}
+                <button
+                  onClick={() => setShowDomainAuthModal(true)}
+                  className="text-cyberse-glow underline hover:text-white font-bold tracking-wider uppercase ml-1"
+                >
+                  View Setup Steps
+                </button>
+              </span>
+            </div>
           </div>
         ) : (
           <>
@@ -575,6 +674,13 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Domain Authorization Helper Modal */}
+      <DomainAuthModal
+        isOpen={showDomainAuthModal}
+        onClose={() => setShowDomainAuthModal(false)}
+        onRetry={handleSignIn}
+      />
 
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-cyberse-glow/10 mt-12 text-center">
