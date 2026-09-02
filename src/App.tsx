@@ -1,15 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Transaction, ReceiptData, UserProfile } from './types';
+import { Transaction, ReceiptData, UserProfile, SpreadsheetConfig, DEFAULT_DOCUMENT_TYPES } from './types';
 import ReceiptUpload from './components/ReceiptUpload';
 import ManualOverride from './components/ManualOverride';
 import Dashboard from './components/Dashboard';
 import TransactionList from './components/TransactionList';
 import AdminDashboard from './components/AdminDashboard';
-import { Wallet, LogIn, LogOut, Plus, X, LayoutDashboard, History, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
+import GoogleSheetsHub from './components/GoogleSheetsHub';
+import { 
+  Wallet, 
+  LogIn, 
+  LogOut, 
+  Plus, 
+  X, 
+  LayoutDashboard, 
+  History, 
+  Sparkles, 
+  Loader2, 
+  ShieldCheck,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertCircle
+} from 'lucide-react';
 import { cn } from './lib/utils';
-import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, getCachedAccessToken } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { appendTransactionToSheet, ensureSheetTabExists } from './services/googleSheetsService';
 
 // Initial empty state for transactions
 const INITIAL_TRANSACTIONS: Transaction[] = [];
@@ -20,8 +36,25 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'admin'>('dashboard');
   const [showUpload, setShowUpload] = useState(false);
+  const [showSheetsHub, setShowSheetsHub] = useState(false);
   const [pendingReceipt, setPendingReceipt] = useState<ReceiptData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Document types & Google Sheets configuration state
+  const [customDocumentTypes, setCustomDocumentTypes] = useState<string[]>([]);
+  const [spreadsheetConfig, setSpreadsheetConfig] = useState<SpreadsheetConfig>({ autoSync: true });
+  const [toast, setToast] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Combine default and custom document types (deduplicated)
+  const allDocumentTypes = Array.from(new Set([...DEFAULT_DOCUMENT_TYPES, ...customDocumentTypes]));
+
+  // Auto-dismiss toast after 5s
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   // Presence Tracking
   useEffect(() => {
@@ -50,12 +83,12 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // First check if user exists in Firestore
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDoc = await getDoc(userDocRef);
         let userProfile: UserProfile;
 
         if (userDoc.exists()) {
           userProfile = userDoc.data() as UserProfile;
-          // Update basic info from Google if changed
           userProfile = {
             ...userProfile,
             displayName: firebaseUser.displayName || userProfile.displayName,
@@ -63,6 +96,13 @@ export default function App() {
             email: firebaseUser.email || userProfile.email,
             role: firebaseUser.email === "jkenangeles9@gmail.com" ? 'admin' : (userProfile.role || 'user')
           };
+
+          if (userProfile.spreadsheetConfig) {
+            setSpreadsheetConfig(userProfile.spreadsheetConfig);
+          }
+          if (userProfile.customDocumentTypes) {
+            setCustomDocumentTypes(userProfile.customDocumentTypes);
+          }
         } else {
           // New user
           const isAdmin = firebaseUser.email === "jkenangeles9@gmail.com";
@@ -72,7 +112,9 @@ export default function App() {
             displayName: firebaseUser.displayName || 'User',
             photoURL: firebaseUser.photoURL || undefined,
             role: isAdmin ? 'admin' : 'user',
-            lastActive: new Date().toISOString()
+            lastActive: new Date().toISOString(),
+            spreadsheetConfig: { autoSync: true },
+            customDocumentTypes: []
           };
         }
 
@@ -80,7 +122,7 @@ export default function App() {
         
         // Sync user profile to Firestore
         try {
-          await setDoc(doc(db, 'users', firebaseUser.uid), userProfile, { merge: true });
+          await setDoc(userDocRef, userProfile, { merge: true });
         } catch (error) {
           console.error('Error syncing user profile:', error);
         }
@@ -111,6 +153,78 @@ export default function App() {
     return () => unsubscribe();
   }, [isAuthReady, user]);
 
+  const handleUpdateSpreadsheetConfig = async (newConfig: SpreadsheetConfig) => {
+    setSpreadsheetConfig(newConfig);
+    if (user) {
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          spreadsheetConfig: newConfig
+        }, { merge: true });
+      } catch (err) {
+        console.error('Error persisting spreadsheet config:', err);
+      }
+    }
+  };
+
+  const handleAddDocumentType = async (newType: string) => {
+    const trimmed = newType.trim();
+    if (!trimmed) return;
+    if (allDocumentTypes.includes(trimmed)) return;
+
+    const updatedCustom = [...customDocumentTypes, trimmed];
+    setCustomDocumentTypes(updatedCustom);
+
+    if (user) {
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          customDocumentTypes: updatedCustom
+        }, { merge: true });
+      } catch (err) {
+        console.error('Error saving custom document type:', err);
+      }
+    }
+
+    // If Google Sheet is connected, create the tab in Google Sheets!
+    if (spreadsheetConfig.spreadsheetId) {
+      const token = getCachedAccessToken();
+      if (token) {
+        try {
+          await ensureSheetTabExists(token, spreadsheetConfig.spreadsheetId, trimmed);
+          setToast({
+            type: 'success',
+            text: `Added option "${trimmed}" and created tab in Google Sheet!`
+          });
+        } catch (e: any) {
+          console.warn('Could not auto-create tab in sheets:', e);
+          setToast({
+            type: 'info',
+            text: `Added option "${trimmed}". (Will auto-create sheet tab upon next scan)`
+          });
+        }
+      }
+    } else {
+      setToast({
+        type: 'success',
+        text: `Added document option "${trimmed}"`
+      });
+    }
+  };
+
+  const handleRemoveDocumentType = async (typeToRemove: string) => {
+    const updatedCustom = customDocumentTypes.filter(t => t !== typeToRemove);
+    setCustomDocumentTypes(updatedCustom);
+
+    if (user) {
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          customDocumentTypes: updatedCustom
+        }, { merge: true });
+      } catch (err) {
+        console.error('Error removing document type:', err);
+      }
+    }
+  };
+
   const handleReceiptProcessed = (data: ReceiptData) => {
     setPendingReceipt(data);
   };
@@ -118,6 +232,7 @@ export default function App() {
   const handleConfirmTransaction = async (data: ReceiptData) => {
     if (!user) return;
 
+    const docType = data.documentType || allDocumentTypes[0] || 'Official Receipt (OR)';
     const transactionId = Math.random().toString(36).substr(2, 9);
     const newTransaction: Transaction = {
       id: transactionId,
@@ -125,14 +240,46 @@ export default function App() {
       merchant: data.merchant,
       amount: data.amount,
       category: data.category,
+      documentType: docType,
       date: new Date(data.date).toISOString(),
       createdAt: new Date().toISOString()
     };
 
     try {
+      // 1. Save to Firestore
       await setDoc(doc(db, 'transactions', transactionId), newTransaction);
       setPendingReceipt(null);
       setShowUpload(false);
+
+      // 2. Real-Time Streaming to Google Sheet tab!
+      if (spreadsheetConfig.spreadsheetId && spreadsheetConfig.autoSync !== false) {
+        let token = getCachedAccessToken();
+        if (token) {
+          try {
+            await appendTransactionToSheet(token, spreadsheetConfig.spreadsheetId, docType, newTransaction);
+            setToast({
+              type: 'success',
+              text: `Archived & streamed to Google Sheet > Tab: "${docType}"`
+            });
+          } catch (sheetErr: any) {
+            console.error('Error streaming transaction to Google Sheet:', sheetErr);
+            setToast({
+              type: 'info',
+              text: `Archived to database. (Sheet sync notice: ${sheetErr.message || 'Check Google authorization'})`
+            });
+          }
+        } else {
+          setToast({
+            type: 'info',
+            text: `Archived to database. Re-authenticate Google to stream to sheet.`
+          });
+        }
+      } else {
+        setToast({
+          type: 'success',
+          text: `Transaction archived successfully.`
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `transactions/${transactionId}`);
     }
@@ -141,6 +288,7 @@ export default function App() {
   const handleDeleteTransaction = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'transactions', id));
+      setToast({ type: 'info', text: 'Transaction record deleted from archive.' });
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
     }
@@ -148,60 +296,99 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-cyberse-bg">
+        <Loader2 className="w-12 h-12 text-cyberse-glow animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="min-h-screen bg-cyberse-bg font-sans text-cyberse-text">
+      {/* Toast Notification Banner */}
+      {toast && (
+        <div className="fixed top-20 right-6 z-[110] max-w-md animate-in slide-in-from-top-4 fade-in duration-300">
+          <div className={cn(
+            "p-4 rounded-2xl border shadow-[0_0_30px_rgba(0,0,0,0.5)] flex items-start gap-3 text-xs font-black uppercase tracking-wider backdrop-blur-xl",
+            toast.type === 'success' && "bg-cyberse-dark/95 border-cyberse-glow text-cyberse-glow shadow-[0_0_20px_rgba(0,242,255,0.2)]",
+            toast.type === 'error' && "bg-cyberse-dark/95 border-cyberse-link text-cyberse-link",
+            toast.type === 'info' && "bg-cyberse-dark/95 border-cyberse-purple text-cyberse-purple"
+          )}>
+            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 shrink-0 text-cyberse-glow mt-0.5" />}
+            {toast.type === 'error' && <AlertCircle className="w-5 h-5 shrink-0 text-cyberse-link mt-0.5" />}
+            {toast.type === 'info' && <FileSpreadsheet className="w-5 h-5 shrink-0 text-cyberse-purple mt-0.5" />}
+            <div className="flex-1 leading-relaxed">{toast.text}</div>
+            <button onClick={() => setToast(null)} className="text-cyberse-muted hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navigation */}
-      <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-100 px-6 py-4">
+      <nav className="sticky top-0 z-50 bg-cyberse-sidebar/90 backdrop-blur-xl border-b border-cyberse-glow/10 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
-              <Sparkles className="w-6 h-6 text-white" />
+          <div className="flex items-center gap-2 group cursor-pointer">
+            <div className="w-10 h-10 rounded-xl bg-cyberse-glow flex items-center justify-center shadow-[0_0_15px_rgba(0,242,255,0.4)] group-hover:scale-110 transition-transform">
+              <Sparkles className="w-6 h-6 text-cyberse-bg" />
             </div>
-            <span className="text-xl font-black tracking-tight text-slate-900">AetherSpend</span>
+            <span className="text-xl font-black tracking-[0.2em] text-cyberse-glow uppercase">CyberSpend</span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 md:gap-6">
             {user && (
-              <div className="hidden md:flex items-center bg-slate-100 p-1 rounded-2xl">
-                <button
-                  onClick={() => setActiveTab('dashboard')}
-                  className={cn(
-                    "px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
-                    activeTab === 'dashboard' ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  <LayoutDashboard className="w-4 h-4" />
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => setActiveTab('history')}
-                  className={cn(
-                    "px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
-                    activeTab === 'history' ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  <History className="w-4 h-4" />
-                  History
-                </button>
-                {user.role === 'admin' && (
+              <>
+                <div className="hidden md:flex items-center bg-cyberse-darker/50 p-1 rounded-xl border border-cyberse-glow/5">
                   <button
-                    onClick={() => setActiveTab('admin')}
+                    onClick={() => setActiveTab('dashboard')}
                     className={cn(
-                      "px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
-                      activeTab === 'admin' ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      "px-6 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 uppercase tracking-wider",
+                      activeTab === 'dashboard' ? "bg-cyberse-glow text-cyberse-bg shadow-[0_0_10px_rgba(0,242,255,0.3)]" : "text-cyberse-muted hover:text-cyberse-glow"
                     )}
                   >
-                    <ShieldCheck className="w-4 h-4" />
-                    Admin
+                    <LayoutDashboard className="w-4 h-4" />
+                    Dashboard
                   </button>
-                )}
-              </div>
+                  <button
+                    onClick={() => setActiveTab('history')}
+                    className={cn(
+                      "px-6 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 uppercase tracking-wider",
+                      activeTab === 'history' ? "bg-cyberse-glow text-cyberse-bg shadow-[0_0_10px_rgba(0,242,255,0.3)]" : "text-cyberse-muted hover:text-cyberse-glow"
+                    )}
+                  >
+                    <History className="w-4 h-4" />
+                    History
+                  </button>
+                  {user.role === 'admin' && (
+                    <button
+                      onClick={() => setActiveTab('admin')}
+                      className={cn(
+                        "px-6 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 uppercase tracking-wider",
+                        activeTab === 'admin' ? "bg-cyberse-glow text-cyberse-bg shadow-[0_0_10px_rgba(0,242,255,0.3)]" : "text-cyberse-muted hover:text-cyberse-glow"
+                      )}
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      Admin
+                    </button>
+                  )}
+                </div>
+
+                {/* Google Sheets Quick Hub Button */}
+                <button
+                  onClick={() => setShowSheetsHub(true)}
+                  className={cn(
+                    "px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 border transition-all",
+                    spreadsheetConfig.spreadsheetId
+                      ? "bg-cyberse-glow/10 text-cyberse-glow border-cyberse-glow/40 hover:bg-cyberse-glow hover:text-cyberse-bg shadow-[0_0_15px_rgba(0,242,255,0.15)]"
+                      : "bg-cyberse-darker text-cyberse-muted border-cyberse-glow/10 hover:border-cyberse-glow/40 hover:text-cyberse-text"
+                  )}
+                  title="Google Sheets Multi-Tab Sync"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span className="hidden sm:inline">
+                    {spreadsheetConfig.spreadsheetId ? 'Google Sheets' : 'Link Sheet'}
+                  </span>
+                </button>
+              </>
             )}
 
             {user ? (
@@ -209,29 +396,29 @@ export default function App() {
                 <div className="hidden sm:block text-right">
                   <div className="flex items-center justify-end gap-2">
                     {user.role === 'admin' && (
-                      <span className="text-[10px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>
+                      <span className="text-[10px] font-black text-cyberse-bg bg-cyberse-glow px-2 py-0.5 rounded-sm uppercase tracking-widest">Admin</span>
                     )}
-                    <p className="text-xs font-bold text-slate-900">{user.displayName}</p>
+                    <p className="text-xs font-bold text-cyberse-text tracking-wide">{user.displayName}</p>
                   </div>
                   <button 
                     onClick={logout}
-                    className="text-[10px] text-slate-500 hover:text-primary transition-colors flex items-center gap-1 justify-end"
+                    className="text-[10px] text-cyberse-muted hover:text-cyberse-link transition-colors flex items-center gap-1 justify-end uppercase tracking-tighter"
                   >
                     <LogOut className="w-2 h-2" />
-                    Sign Out
+                    Disconnect
                   </button>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
-                  {user.photoURL ? <img src={user.photoURL} alt="Profile" /> : <div className="w-full h-full flex items-center justify-center text-slate-400 font-bold">U</div>}
+                <div className="w-10 h-10 rounded-lg border border-cyberse-glow/30 shadow-[0_0_10px_rgba(0,242,255,0.2)] overflow-hidden">
+                  {user.photoURL ? <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-cyberse-darker text-cyberse-glow font-bold">U</div>}
                 </div>
               </div>
             ) : (
               <button 
                 onClick={signInWithGoogle}
-                className="bg-primary text-white px-6 py-2 rounded-2xl font-bold flex items-center gap-2 hover:bg-primary/90 transition-all"
+                className="bg-cyberse-glow text-cyberse-bg px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-white transition-all shadow-[0_0_15px_rgba(0,242,255,0.3)] uppercase text-xs tracking-widest"
               >
                 <LogIn className="w-4 h-4" />
-                Sign In
+                Initialize
               </button>
             )}
           </div>
@@ -240,20 +427,20 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-6 py-12">
         {!user ? (
-          <div className="text-center py-24 bg-white rounded-[40px] border border-slate-100 shadow-sm">
-            <div className="w-24 h-24 rounded-[32px] bg-primary/10 flex items-center justify-center mx-auto mb-8">
-              <Wallet className="w-12 h-12 text-primary" />
+          <div className="text-center py-24 cyber-card border-cyberse-glow/10">
+            <div className="w-24 h-24 rounded-3xl bg-cyberse-glow/10 flex items-center justify-center mx-auto mb-8 border border-cyberse-glow/20 shadow-[0_0_30px_rgba(0,242,255,0.1)]">
+              <Wallet className="w-12 h-12 text-cyberse-glow" />
             </div>
-            <h2 className="text-4xl font-black text-slate-900 tracking-tight mb-4">Welcome to AetherSpend</h2>
-            <p className="text-slate-500 text-lg max-w-md mx-auto mb-12">
-              Sign in to start scanning receipts and tracking your spending with AI-powered insights.
+            <h2 className="text-4xl font-black text-cyberse-text tracking-[0.3em] mb-4">Welcome to CyberSpend</h2>
+            <p className="text-cyberse-muted text-lg max-w-md mx-auto mb-12 font-light">
+              Authorize connection to scan receipts (OR, SI, etc.) and stream them directly into categorized Google Sheets tabs with high-tech AI extraction.
             </p>
             <button 
               onClick={signInWithGoogle}
-              className="bg-primary text-white px-12 py-5 rounded-3xl font-bold flex items-center gap-3 hover:bg-primary/90 transition-all shadow-2xl shadow-primary/20 mx-auto text-xl"
+              className="bg-cyberse-glow text-cyberse-bg px-12 py-5 rounded-2xl font-bold flex items-center gap-3 hover:bg-white transition-all shadow-[0_0_40px_rgba(0,242,255,0.3)] mx-auto text-xl uppercase tracking-widest"
             >
               <LogIn className="w-6 h-6" />
-              Get Started with Google
+              Access System
             </button>
           </div>
         ) : (
@@ -261,27 +448,36 @@ export default function App() {
             {/* Header Section */}
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
               <div>
-                <h1 className="text-4xl font-black text-slate-900 tracking-tight">
-                  {activeTab === 'dashboard' ? 'Financial Overview' : 
-                   activeTab === 'history' ? 'Transaction History' : 'Admin Dashboard'}
+                <h1 className="text-4xl font-black text-cyberse-glow tracking-[0.2em] uppercase">
+                  {activeTab === 'dashboard' ? 'System Overview' : 
+                   activeTab === 'history' ? 'Data Archives' : 'Admin Terminal'}
                 </h1>
-                <p className="text-slate-500 mt-2 text-lg">
+                <p className="text-cyberse-muted mt-2 text-lg font-light tracking-wide">
                   {activeTab === 'dashboard' 
-                    ? 'Track your spending habits with AI-powered insights.' 
+                    ? 'Monitoring financial activity and Google Sheets multi-tab sync.' 
                     : activeTab === 'history'
-                    ? 'A complete record of your Aether-Scanned transactions.'
-                    : 'Monitor active users and system status.'}
+                    ? 'Accessing Cyber-Scanned transaction database with document classification.'
+                    : 'System monitoring and user management portal.'}
                 </p>
               </div>
               
               {activeTab !== 'admin' && (
-                <button
-                  onClick={() => setShowUpload(true)}
-                  className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-primary/90 transition-all shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <Plus className="w-6 h-6" />
-                  Scan New Receipt
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowSheetsHub(true)}
+                    className="bg-cyberse-darker hover:bg-cyberse-dark text-cyberse-glow px-6 py-4 rounded-xl font-black flex items-center justify-center gap-2 border border-cyberse-glow/30 transition-all uppercase tracking-widest text-xs"
+                  >
+                    <FileSpreadsheet className="w-5 h-5" />
+                    Sheets Hub
+                  </button>
+                  <button
+                    onClick={() => setShowUpload(true)}
+                    className="bg-cyberse-glow text-cyberse-bg px-8 py-4 rounded-xl font-black flex items-center justify-center gap-3 hover:bg-white transition-all shadow-[0_0_25px_rgba(0,242,255,0.3)] hover:scale-[1.02] active:scale-[0.98] uppercase tracking-widest text-sm"
+                  >
+                    <Plus className="w-6 h-6" />
+                    New Scan
+                  </button>
+                </div>
               )}
             </div>
 
@@ -289,11 +485,24 @@ export default function App() {
             <div className="space-y-12">
               {activeTab === 'dashboard' ? (
                 <>
-                  <Dashboard transactions={transactions} />
-                  <TransactionList transactions={transactions.slice(0, 5)} onDelete={handleDeleteTransaction} />
+                  <Dashboard 
+                    transactions={transactions} 
+                    spreadsheetConfig={spreadsheetConfig}
+                    documentTypes={allDocumentTypes}
+                    onOpenSheetsHub={() => setShowSheetsHub(true)}
+                  />
+                  <TransactionList 
+                    transactions={transactions.slice(0, 8)} 
+                    onDelete={handleDeleteTransaction}
+                    documentTypes={allDocumentTypes}
+                  />
                 </>
               ) : activeTab === 'history' ? (
-                <TransactionList transactions={transactions} onDelete={handleDeleteTransaction} />
+                <TransactionList 
+                  transactions={transactions} 
+                  onDelete={handleDeleteTransaction}
+                  documentTypes={allDocumentTypes}
+                />
               ) : (
                 <AdminDashboard currentUser={user} />
               )}
@@ -302,33 +511,63 @@ export default function App() {
         )}
       </main>
 
+      {/* Google Sheets Hub Modal */}
+      {showSheetsHub && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+          <div 
+            className="fixed inset-0 bg-cyberse-bg/85 backdrop-blur-xl animate-in fade-in duration-300"
+            onClick={() => setShowSheetsHub(false)}
+          />
+          <div className="relative w-full max-w-3xl z-10 my-8">
+            <GoogleSheetsHub
+              config={spreadsheetConfig}
+              documentTypes={allDocumentTypes}
+              transactions={transactions}
+              onUpdateConfig={handleUpdateSpreadsheetConfig}
+              onAddDocumentType={handleAddDocumentType}
+              onRemoveDocumentType={handleRemoveDocumentType}
+              onClose={() => setShowSheetsHub(false)}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Modal Overlay for Upload/Override */}
       {(showUpload || pendingReceipt) && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 overflow-y-auto">
           <div 
-            className="absolute inset-0 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300"
+            className="fixed inset-0 bg-cyberse-bg/85 backdrop-blur-xl animate-in fade-in duration-300"
             onClick={() => {
               if (!pendingReceipt) setShowUpload(false);
             }}
           />
           
-          <div className="relative w-full max-w-2xl z-10">
+          <div className="relative w-full max-w-2xl z-10 my-8">
             {!pendingReceipt ? (
-              <div className="bg-white rounded-3xl p-8 shadow-2xl">
+              <div className="cyber-card p-8 border-cyberse-glow/30 shadow-[0_0_50px_rgba(0,242,255,0.2)]">
                 <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-2xl font-bold text-slate-900">Scan Receipt</h3>
+                  <div>
+                    <h3 className="text-2xl font-bold text-cyberse-glow tracking-widest uppercase">Scanner Interface</h3>
+                    <p className="text-[10px] text-cyberse-muted uppercase tracking-widest mt-1">Select receipt document type & scan</p>
+                  </div>
                   <button 
                     onClick={() => setShowUpload(false)}
-                    className="p-2 rounded-xl hover:bg-slate-100 text-slate-400 transition-all"
+                    className="p-2 rounded-lg hover:bg-cyberse-darker text-cyberse-muted hover:text-cyberse-glow transition-all"
                   >
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                <ReceiptUpload onProcessed={handleReceiptProcessed} />
+                <ReceiptUpload 
+                  onProcessed={handleReceiptProcessed} 
+                  documentTypes={allDocumentTypes}
+                  onAddDocumentType={handleAddDocumentType}
+                />
               </div>
             ) : (
               <ManualOverride 
                 data={pendingReceipt} 
+                documentTypes={allDocumentTypes}
+                spreadsheetName={spreadsheetConfig.spreadsheetName}
                 onConfirm={handleConfirmTransaction}
                 onCancel={() => setPendingReceipt(null)}
               />
@@ -338,12 +577,12 @@ export default function App() {
       )}
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-slate-200 mt-12 text-center">
+      <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-cyberse-glow/10 mt-12 text-center">
         <div className="flex items-center justify-center gap-2 mb-4 opacity-50">
-          <Sparkles className="w-5 h-5 text-primary" />
-          <span className="font-bold tracking-tight text-slate-900">AetherSpend</span>
+          <Sparkles className="w-5 h-5 text-cyberse-glow" />
+          <span className="font-bold tracking-[0.3em] text-cyberse-glow uppercase">CyberSpend</span>
         </div>
-        <p className="text-sm text-slate-400">© 2026 AetherSpend AI. Frictionless budgeting for the modern era.</p>
+        <p className="text-xs text-cyberse-muted uppercase tracking-widest">© 2026 CyberSpend AI // Google Sheets Protocol Integration</p>
       </footer>
     </div>
   );

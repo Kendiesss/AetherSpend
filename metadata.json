@@ -1,5 +1,5 @@
 {
-  "name": "AetherSpend",
+  "name": "CyberSpend",
   "description": "A frictionless AI-powered budget tracker with scan-to-budget receipt processing.",
   "requestFramePermissions": [
     "camera"

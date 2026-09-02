@@ -11,18 +11,47 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
-  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || (firebaseConfigJson as any).firestoreDatabaseId,
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app);
+
 export const googleProvider = new GoogleAuthProvider();
+// Workspace Scopes for Google Sheets & Drive
+googleProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
+googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
+
+// In-memory access token cache for Google Workspace APIs
+let cachedAccessToken: string | null = null;
+
+export const setCachedAccessToken = (token: string | null) => {
+  cachedAccessToken = token;
+};
+
+export const getCachedAccessToken = () => cachedAccessToken;
 
 // Auth Helpers
-export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
-export const logout = () => signOut(auth);
+export const signInWithGoogle = async () => {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+    }
+    return result;
+  } catch (error) {
+    console.error('Sign-in error:', error);
+    throw error;
+  }
+};
+
+export const logout = async () => {
+  cachedAccessToken = null;
+  return signOut(auth);
+};
 
 // Error Handling Helper
 export enum OperationType {

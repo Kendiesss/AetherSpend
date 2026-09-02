@@ -1,26 +1,65 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   
-  --color-primary: #3b82f6;
+  --color-cyberse-bg: #050a14;
+  --color-cyberse-dark: #0c1631;
+  --color-cyberse-darker: #1a2a4a;
+  --color-cyberse-sidebar: #081021;
+  --color-cyberse-glow: #00f2ff;
+  --color-cyberse-link: #ff4d00;
+  --color-cyberse-purple: #9d4edd;
+  --color-cyberse-text: #e0e7ff;
+  --color-cyberse-muted: #7c8db5;
+  
+  --color-primary: var(--color-cyberse-glow);
   --color-destructive: #ef4444;
 }
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-cyberse-bg text-cyberse-text antialiased min-h-screen relative;
   }
   
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display tracking-tight;
+    @apply font-display tracking-widest uppercase;
+  }
+
+  /* Cyber Grid Background */
+  body::before {
+    content: "";
+    @apply fixed inset-0 pointer-events-none z-[-1];
+    background-image: 
+      linear-gradient(to right, rgba(0, 242, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0, 242, 255, 0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(circle at center, black, transparent 80%);
   }
 }
 
 @layer components {
-  .glass-card {
-    @apply bg-white/80 backdrop-blur-xl border border-white/20 shadow-xl shadow-slate-200/50;
+  .cyber-card {
+    @apply bg-cyberse-dark/60 backdrop-blur-md border border-cyberse-glow/20 rounded-2xl shadow-[0_0_20px_rgba(0,242,255,0.05)];
+    transition: all 0.3s ease;
+  }
+
+  .cyber-card:hover {
+    @apply border-cyberse-glow/40 shadow-[0_0_30px_rgba(0,242,255,0.1)];
+  }
+
+  .neon-glow {
+    @apply shadow-[0_0_15px_rgba(0,242,255,0.5)];
+  }
+
+  .neon-text {
+    @apply text-cyberse-glow drop-shadow-[0_0_8px_rgba(0,242,255,0.5)];
+  }
+
+  .hex-bg {
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
   }
 }
