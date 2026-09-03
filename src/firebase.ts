@@ -11,13 +11,21 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
-  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || (firebaseConfigJson as any).firestoreDatabaseId,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || (firebaseConfigJson as any).firestoreDatabaseId || 'ai-studio-d6d0fcef-64e3-4b6a-8e8a-3804f6cf5c4d',
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+export const isDatabaseNotFoundError = (error: unknown): boolean => {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes("Database '(default)' not found") || 
+         msg.includes("not-found") || 
+         msg.includes("Database") && msg.includes("not found");
+};
 
 export const googleProvider = new GoogleAuthProvider();
 // Workspace Scopes for Google Sheets & Drive
@@ -110,7 +118,9 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
+    if (isDatabaseNotFoundError(error)) {
+      console.warn("Firestore database '(default)' not found in Firebase project. Local mode enabled.");
+    } else if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error("Please check your Firebase configuration.");
     }
   }

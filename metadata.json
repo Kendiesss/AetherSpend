@@ -3,5 +3,8 @@
   "description": "A frictionless AI-powered budget tracker with scan-to-budget receipt processing.",
   "requestFramePermissions": [
     "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

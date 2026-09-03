@@ -7,6 +7,7 @@ import TransactionList from './components/TransactionList';
 import AdminDashboard from './components/AdminDashboard';
 import GoogleSheetsHub from './components/GoogleSheetsHub';
 import DomainAuthModal from './components/DomainAuthModal';
+import DatabaseSetupModal from './components/DatabaseSetupModal';
 import { 
   Wallet, 
   LogIn, 
@@ -22,10 +23,11 @@ import {
   CheckCircle2,
   AlertCircle,
   ShieldAlert,
-  Zap
+  Zap,
+  Database
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, getCachedAccessToken } from './firebase';
+import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, getCachedAccessToken, isDatabaseNotFoundError } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { appendTransactionToSheet, ensureSheetTabExists } from './services/googleSheetsService';
@@ -41,6 +43,8 @@ export default function App() {
   const [showUpload, setShowUpload] = useState(false);
   const [showSheetsHub, setShowSheetsHub] = useState(false);
   const [showDomainAuthModal, setShowDomainAuthModal] = useState(false);
+  const [showDatabaseSetupModal, setShowDatabaseSetupModal] = useState(false);
+  const [isFirestoreAvailable, setIsFirestoreAvailable] = useState<boolean | null>(null);
   const [pendingReceipt, setPendingReceipt] = useState<ReceiptData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -63,7 +67,7 @@ export default function App() {
 
   // Presence Tracking
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.uid === 'demo-guest-user' || isFirestoreAvailable === false) return;
 
     const updatePresence = async () => {
       try {
@@ -71,7 +75,7 @@ export default function App() {
           lastActive: new Date().toISOString()
         }, { merge: true });
       } catch (error) {
-        console.error('Error updating presence:', error);
+        // Non-blocking presence update error
       }
     };
 
@@ -81,55 +85,88 @@ export default function App() {
     // Update every 2 minutes
     const interval = setInterval(updatePresence, 2 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, isFirestoreAvailable]);
 
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // First check if user exists in Firestore
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        let userProfile: UserProfile;
+        let userProfile: UserProfile | null = null;
+        const localKey = `cyberspend_profile_${firebaseUser.uid}`;
 
-        if (userDoc.exists()) {
-          userProfile = userDoc.data() as UserProfile;
-          userProfile = {
-            ...userProfile,
-            displayName: firebaseUser.displayName || userProfile.displayName,
-            photoURL: firebaseUser.photoURL || userProfile.photoURL,
-            email: firebaseUser.email || userProfile.email,
-            role: firebaseUser.email === "jkenangeles9@gmail.com" ? 'admin' : (userProfile.role || 'user')
-          };
+        // Attempt reading user profile from Firestore, handling missing database gracefully
+        try {
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
 
-          if (userProfile.spreadsheetConfig) {
-            setSpreadsheetConfig(userProfile.spreadsheetConfig);
+          if (userDoc.exists()) {
+            userProfile = userDoc.data() as UserProfile;
+            userProfile = {
+              ...userProfile,
+              displayName: firebaseUser.displayName || userProfile.displayName,
+              photoURL: firebaseUser.photoURL || userProfile.photoURL,
+              email: firebaseUser.email || userProfile.email,
+              role: firebaseUser.email === "jkenangeles9@gmail.com" ? 'admin' : (userProfile.role || 'user')
+            };
+
+            if (userProfile.spreadsheetConfig) {
+              setSpreadsheetConfig(userProfile.spreadsheetConfig);
+            }
+            if (userProfile.customDocumentTypes) {
+              setCustomDocumentTypes(userProfile.customDocumentTypes);
+            }
           }
-          if (userProfile.customDocumentTypes) {
-            setCustomDocumentTypes(userProfile.customDocumentTypes);
+          setIsFirestoreAvailable(true);
+        } catch (error) {
+          if (isDatabaseNotFoundError(error)) {
+            console.warn("Firestore database '(default)' not found in Firebase. Running in local mode.");
+            setIsFirestoreAvailable(false);
+            setShowDatabaseSetupModal(true);
           }
-        } else {
-          // New user
-          const isAdmin = firebaseUser.email === "jkenangeles9@gmail.com";
-          userProfile = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            displayName: firebaseUser.displayName || 'User',
-            photoURL: firebaseUser.photoURL || undefined,
-            role: isAdmin ? 'admin' : 'user',
-            lastActive: new Date().toISOString(),
-            spreadsheetConfig: { autoSync: true },
-            customDocumentTypes: []
-          };
+        }
+
+        // If not loaded from Firestore, check local storage or create new default profile
+        if (!userProfile) {
+          const cached = localStorage.getItem(localKey);
+          if (cached) {
+            try {
+              userProfile = JSON.parse(cached);
+            } catch (e) {
+              userProfile = null;
+            }
+          }
+
+          if (!userProfile) {
+            const isAdmin = firebaseUser.email === "jkenangeles9@gmail.com";
+            userProfile = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || 'User',
+              photoURL: firebaseUser.photoURL || undefined,
+              role: isAdmin ? 'admin' : 'user',
+              lastActive: new Date().toISOString(),
+              spreadsheetConfig: { autoSync: true },
+              customDocumentTypes: []
+            };
+          }
         }
 
         setUser(userProfile);
-        
-        // Sync user profile to Firestore
         try {
-          await setDoc(userDocRef, userProfile, { merge: true });
-        } catch (error) {
-          console.error('Error syncing user profile:', error);
+          localStorage.setItem(localKey, JSON.stringify(userProfile));
+        } catch (e) {}
+        
+        // Sync user profile to Firestore if available
+        if (isFirestoreAvailable !== false) {
+          try {
+            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            await setDoc(userDocRef, userProfile, { merge: true });
+          } catch (error) {
+            if (isDatabaseNotFoundError(error)) {
+              setIsFirestoreAvailable(false);
+              setShowDatabaseSetupModal(true);
+            }
+          }
         }
       } else {
         setUser(null);
@@ -147,21 +184,58 @@ export default function App() {
       return;
     }
 
+    const localTxsKey = `cyberspend_txs_${user.uid}`;
+
     if (user.uid === 'demo-guest-user') {
-      // In Guest mode, transactions remain stored in local state
+      const saved = localStorage.getItem(localTxsKey);
+      if (saved) {
+        try {
+          setTransactions(JSON.parse(saved));
+        } catch (e) {}
+      }
       return;
     }
 
-    const q = query(collection(db, 'transactions'), where('userId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const txs = snapshot.docs.map(doc => doc.data() as Transaction);
-      setTransactions(txs);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'transactions');
-    });
+    // Load cached local records first for immediate UI display
+    const cachedTxs = localStorage.getItem(localTxsKey);
+    if (cachedTxs) {
+      try {
+        setTransactions(JSON.parse(cachedTxs));
+      } catch (e) {}
+    }
 
-    return () => unsubscribe();
-  }, [isAuthReady, user]);
+    // If Firestore has already been flagged as not found, skip continuous onSnapshot reconnects
+    if (isFirestoreAvailable === false) {
+      return;
+    }
+
+    try {
+      const q = query(collection(db, 'transactions'), where('userId', '==', user.uid));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setIsFirestoreAvailable(true);
+        const txs = snapshot.docs.map(doc => doc.data() as Transaction);
+        setTransactions(txs);
+        try {
+          localStorage.setItem(localTxsKey, JSON.stringify(txs));
+        } catch (e) {}
+      }, (error) => {
+        if (isDatabaseNotFoundError(error)) {
+          console.warn("Firestore database '(default)' not found in Firebase. Utilizing local archive.");
+          setIsFirestoreAvailable(false);
+          setShowDatabaseSetupModal(true);
+        } else {
+          handleFirestoreError(error, OperationType.LIST, 'transactions');
+        }
+      });
+
+      return () => unsubscribe();
+    } catch (err) {
+      if (isDatabaseNotFoundError(err)) {
+        setIsFirestoreAvailable(false);
+        setShowDatabaseSetupModal(true);
+      }
+    }
+  }, [isAuthReady, user, isFirestoreAvailable]);
 
   // Handlers for Sign In
   const handleSignIn = async () => {
@@ -312,11 +386,30 @@ export default function App() {
     };
 
     try {
-      // 1. Save to Firestore (or local state in Guest mode)
-      if (user.uid === 'demo-guest-user') {
-        setTransactions(prev => [newTransaction, ...prev]);
+      // 1. Save to Firestore (or local state in Guest/offline mode)
+      if (user.uid === 'demo-guest-user' || isFirestoreAvailable === false) {
+        const updated = [newTransaction, ...transactions];
+        setTransactions(updated);
+        try {
+          localStorage.setItem(`cyberspend_txs_${user.uid}`, JSON.stringify(updated));
+        } catch (e) {}
       } else {
-        await setDoc(doc(db, 'transactions', transactionId), newTransaction);
+        try {
+          await setDoc(doc(db, 'transactions', transactionId), newTransaction);
+        } catch (dbErr) {
+          if (isDatabaseNotFoundError(dbErr)) {
+            console.warn("Firestore database '(default)' not found. Saving transaction locally.");
+            setIsFirestoreAvailable(false);
+            setShowDatabaseSetupModal(true);
+            const updated = [newTransaction, ...transactions];
+            setTransactions(updated);
+            try {
+              localStorage.setItem(`cyberspend_txs_${user.uid}`, JSON.stringify(updated));
+            } catch (e) {}
+          } else {
+            throw dbErr;
+          }
+        }
       }
       setPendingReceipt(null);
       setShowUpload(false);
@@ -335,19 +428,21 @@ export default function App() {
             console.error('Error streaming transaction to Google Sheet:', sheetErr);
             setToast({
               type: 'info',
-              text: `Archived to database. (Sheet sync notice: ${sheetErr.message || 'Check Google authorization'})`
+              text: `Archived to records. (Sheet sync notice: ${sheetErr.message || 'Check Google authorization'})`
             });
           }
         } else {
           setToast({
             type: 'info',
-            text: `Archived to database. Re-authenticate Google to stream to sheet.`
+            text: `Archived to records. Re-authenticate Google to stream to sheet.`
           });
         }
       } else {
         setToast({
           type: 'success',
-          text: `Transaction archived successfully.`
+          text: isFirestoreAvailable === false 
+            ? 'Transaction archived in Local Storage (Cloud DB pending setup).'
+            : 'Transaction archived successfully.'
         });
       }
     } catch (error) {
@@ -357,10 +452,30 @@ export default function App() {
 
   const handleDeleteTransaction = async (id: string) => {
     try {
-      if (user?.uid === 'demo-guest-user') {
-        setTransactions(prev => prev.filter(t => t.id !== id));
+      if (user?.uid === 'demo-guest-user' || isFirestoreAvailable === false) {
+        const updated = transactions.filter(t => t.id !== id);
+        setTransactions(updated);
+        if (user) {
+          try {
+            localStorage.setItem(`cyberspend_txs_${user.uid}`, JSON.stringify(updated));
+          } catch (e) {}
+        }
       } else {
-        await deleteDoc(doc(db, 'transactions', id));
+        try {
+          await deleteDoc(doc(db, 'transactions', id));
+        } catch (dbErr) {
+          if (isDatabaseNotFoundError(dbErr)) {
+            const updated = transactions.filter(t => t.id !== id);
+            setTransactions(updated);
+            if (user) {
+              try {
+                localStorage.setItem(`cyberspend_txs_${user.uid}`, JSON.stringify(updated));
+              } catch (e) {}
+            }
+          } else {
+            throw dbErr;
+          }
+        }
       }
       setToast({ type: 'info', text: 'Transaction record deleted from archive.' });
     } catch (error) {
@@ -467,6 +582,17 @@ export default function App() {
 
             {user ? (
               <div className="flex items-center gap-4">
+                {isFirestoreAvailable === false && (
+                  <button
+                    onClick={() => setShowDatabaseSetupModal(true)}
+                    className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyberse-purple/10 border border-cyberse-purple/30 text-[10px] font-black text-cyberse-purple uppercase tracking-wider hover:bg-cyberse-purple hover:text-white transition-all shadow-[0_0_10px_rgba(188,19,254,0.2)]"
+                    title="Cloud Firestore database pending creation. Click for 1-minute setup guide."
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    <span>Cloud DB Pending</span>
+                  </button>
+                )}
+
                 <div className="hidden sm:block text-right">
                   <div className="flex items-center justify-end gap-2">
                     {user.role === 'admin' && (
@@ -693,6 +819,17 @@ export default function App() {
         isOpen={showDomainAuthModal}
         onClose={() => setShowDomainAuthModal(false)}
         onRetry={handleSignIn}
+      />
+
+      {/* Cloud Firestore Setup Helper Modal */}
+      <DatabaseSetupModal
+        isOpen={showDatabaseSetupModal}
+        onClose={() => setShowDatabaseSetupModal(false)}
+        onRetry={() => {
+          setShowDatabaseSetupModal(false);
+          setIsFirestoreAvailable(null); // Triggers re-check
+        }}
+        onUseLocalMode={() => setShowDatabaseSetupModal(false)}
       />
 
       {/* Footer */}
