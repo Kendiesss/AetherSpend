@@ -51,6 +51,14 @@ export default function GoogleSheetsHub({
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
+  const [recentSheets, setRecentSheets] = useState<Array<{ id: string; name: string; url?: string; updated?: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('cyberspend_recent_sheets');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
 
   const getValidToken = async (): Promise<string> => {
     let token = getCachedAccessToken();
@@ -90,9 +98,18 @@ export default function GoogleSheetsHub({
         lastSyncedAt: new Date().toISOString()
       });
 
+      const updatedRecent = [
+        { id: res.spreadsheetId, name: res.spreadsheetName, url: res.spreadsheetUrl, updated: new Date().toISOString() },
+        ...recentSheets.filter(s => s.id !== res.spreadsheetId)
+      ].slice(0, 5);
+      setRecentSheets(updatedRecent);
+      try {
+        localStorage.setItem('cyberspend_recent_sheets', JSON.stringify(updatedRecent));
+      } catch (e) {}
+
       setStatusMessage({ 
         type: 'success', 
-        text: `Created "${res.spreadsheetName}" with ${res.tabs.length} tabs in your Google Drive!` 
+        text: `Created "${res.spreadsheetName}" with ${res.tabs.length} tabs in your Google Drive! Automatically linked and saved.` 
       });
     } catch (err: any) {
       console.error(err);
@@ -120,13 +137,54 @@ export default function GoogleSheetsHub({
         spreadsheetUrl: info.url
       });
 
+      const updatedRecent = [
+        { id: cleanId, name: info.title, url: info.url, updated: new Date().toISOString() },
+        ...recentSheets.filter(s => s.id !== cleanId)
+      ].slice(0, 5);
+      setRecentSheets(updatedRecent);
+      try {
+        localStorage.setItem('cyberspend_recent_sheets', JSON.stringify(updatedRecent));
+      } catch (e) {}
+
       setSheetInput('');
       setStatusMessage({ 
         type: 'success', 
-        text: `Successfully linked "${info.title}" (${info.tabs.length} existing tabs).` 
+        text: `Successfully linked "${info.title}" (${info.tabs.length} existing tabs) and saved permanently!` 
       });
     } catch (err: any) {
       console.error(err);
+      setStatusMessage({ type: 'error', text: err.message || 'Could not access spreadsheet' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDisconnectSheet = async () => {
+    await onUpdateConfig({
+      autoSync: false,
+      spreadsheetId: undefined,
+      spreadsheetName: undefined,
+      spreadsheetUrl: undefined
+    });
+    setStatusMessage({ type: 'info', text: 'Google Sheet disconnected. Receipts will be saved to Cloud DB & Local Storage.' });
+  };
+
+  const handleSelectRecentSheet = async (sheet: { id: string; name: string; url?: string }) => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    try {
+      const token = await getValidToken();
+      setStatusMessage({ type: 'info', text: `Reconnecting to "${sheet.name}"...` });
+      const info = await getSpreadsheetInfo(token, sheet.id);
+      await onUpdateConfig({
+        ...config,
+        spreadsheetId: sheet.id,
+        spreadsheetName: info.title || sheet.name,
+        spreadsheetUrl: info.url || sheet.url,
+        lastSyncedAt: new Date().toISOString()
+      });
+      setStatusMessage({ type: 'success', text: `Connected and saved "${info.title || sheet.name}"!` });
+    } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message || 'Could not access spreadsheet' });
     } finally {
       setIsLoading(false);
@@ -339,17 +397,29 @@ export default function GoogleSheetsHub({
                 )}
               </div>
 
-              {config.spreadsheetUrl && (
-                <a
-                  href={config.spreadsheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-cyberse-glow/10 hover:bg-cyberse-glow hover:text-cyberse-bg text-cyberse-glow px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 border border-cyberse-glow/30 transition-all shadow-[0_0_15px_rgba(0,242,255,0.1)] self-start sm:self-auto"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Open Live Sheet ↗
-                </a>
-              )}
+              <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                {config.spreadsheetUrl && (
+                  <a
+                    href={config.spreadsheetUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-cyberse-glow/10 hover:bg-cyberse-glow hover:text-cyberse-bg text-cyberse-glow px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 border border-cyberse-glow/30 transition-all shadow-[0_0_15px_rgba(0,242,255,0.1)]"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open Live Sheet ↗
+                  </a>
+                )}
+                {config.spreadsheetId && (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectSheet}
+                    className="bg-cyberse-darker hover:bg-cyberse-link/20 hover:text-cyberse-link text-cyberse-muted px-3.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border border-cyberse-glow/15 transition-all"
+                    title="Unlink current sheet"
+                  >
+                    Disconnect
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Auto-sync setting */}
@@ -377,6 +447,73 @@ export default function GoogleSheetsHub({
               </div>
             )}
           </div>
+
+          {/* Recent Sheets Quick Reconnect */}
+          {recentSheets.length > 0 && (
+            <div className="bg-cyberse-darker/50 p-4 rounded-2xl border border-cyberse-glow/15 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-cyberse-glow uppercase tracking-widest flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Saved & Recent Spreadsheets
+                </span>
+                <span className="text-[10px] text-cyberse-muted font-bold">1-Click Switch</span>
+              </div>
+              <div className="space-y-2">
+                {recentSheets.map((sheet) => {
+                  const isActive = config.spreadsheetId === sheet.id;
+                  return (
+                    <div 
+                      key={sheet.id} 
+                      className={cn(
+                        "flex items-center justify-between p-3 rounded-xl border text-xs transition-all",
+                        isActive 
+                          ? "bg-cyberse-glow/10 border-cyberse-glow/40 text-cyberse-glow" 
+                          : "bg-cyberse-dark/60 border-cyberse-glow/10 hover:border-cyberse-glow/30"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5 truncate mr-2">
+                        <div className={cn(
+                          "w-2 h-2 rounded-full shrink-0",
+                          isActive ? "bg-cyberse-glow animate-pulse" : "bg-cyberse-muted"
+                        )} />
+                        <div className="truncate">
+                          <p className="font-bold text-cyberse-text truncate">{sheet.name}</p>
+                          <p className="text-[10px] text-cyberse-muted font-mono truncate">ID: {sheet.id}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isActive ? (
+                          <span className="text-[10px] font-black text-cyberse-glow bg-cyberse-glow/10 border border-cyberse-glow/30 px-2.5 py-1 rounded-lg uppercase">
+                            Active
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectRecentSheet(sheet)}
+                            disabled={isLoading}
+                            className="text-[10px] font-black uppercase tracking-wider bg-cyberse-glow text-cyberse-bg px-3 py-1 rounded-lg hover:bg-white transition-all disabled:opacity-50"
+                          >
+                            Use This Sheet
+                          </button>
+                        )}
+                        {sheet.url && (
+                          <a
+                            href={sheet.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg text-cyberse-muted hover:text-cyberse-glow hover:bg-cyberse-darker transition-colors"
+                            title="Open in Google Sheets"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Action 1: Create New Sheet */}
           <div className="bg-cyberse-darker/40 p-5 rounded-2xl border border-cyberse-glow/15 space-y-3">

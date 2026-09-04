@@ -24,7 +24,8 @@ import {
   AlertCircle,
   ShieldAlert,
   Zap,
-  Database
+  Database,
+  ExternalLink
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, getCachedAccessToken, isDatabaseNotFoundError } from './firebase';
@@ -49,9 +50,29 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  // Document types & Google Sheets configuration state
-  const [customDocumentTypes, setCustomDocumentTypes] = useState<string[]>([]);
-  const [spreadsheetConfig, setSpreadsheetConfig] = useState<SpreadsheetConfig>({ autoSync: true });
+  // Document types & Google Sheets configuration state with local persistence hydration
+  const [customDocumentTypes, setCustomDocumentTypes] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('cyberspend_custom_doc_types');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [spreadsheetConfig, setSpreadsheetConfig] = useState<SpreadsheetConfig>(() => {
+    try {
+      const saved = localStorage.getItem('cyberspend_active_spreadsheet_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.spreadsheetId) return parsed;
+      }
+    } catch (e) {}
+    return { autoSync: true };
+  });
+
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // Combine default and custom document types (deduplicated)
@@ -93,6 +114,7 @@ export default function App() {
       if (firebaseUser) {
         let userProfile: UserProfile | null = null;
         const localKey = `cyberspend_profile_${firebaseUser.uid}`;
+        const localSheetKey = `cyberspend_spreadsheet_config_${firebaseUser.uid}`;
 
         // Attempt reading user profile from Firestore, handling missing database gracefully
         try {
@@ -109,11 +131,19 @@ export default function App() {
               role: firebaseUser.email === "jkenangeles9@gmail.com" ? 'admin' : (userProfile.role || 'user')
             };
 
-            if (userProfile.spreadsheetConfig) {
+            if (userProfile.spreadsheetConfig?.spreadsheetId) {
               setSpreadsheetConfig(userProfile.spreadsheetConfig);
+              try {
+                localStorage.setItem('cyberspend_active_spreadsheet_config', JSON.stringify(userProfile.spreadsheetConfig));
+                localStorage.setItem(localSheetKey, JSON.stringify(userProfile.spreadsheetConfig));
+              } catch (e) {}
             }
-            if (userProfile.customDocumentTypes) {
+
+            if (userProfile.customDocumentTypes && userProfile.customDocumentTypes.length > 0) {
               setCustomDocumentTypes(userProfile.customDocumentTypes);
+              try {
+                localStorage.setItem('cyberspend_custom_doc_types', JSON.stringify(userProfile.customDocumentTypes));
+              } catch (e) {}
             }
           }
           setIsFirestoreAvailable(true);
@@ -123,6 +153,21 @@ export default function App() {
             setIsFirestoreAvailable(false);
             setShowDatabaseSetupModal(true);
           }
+        }
+
+        // Recover local spreadsheet config if Firestore didn't have one yet
+        let activeSheet = userProfile?.spreadsheetConfig;
+        if (!activeSheet?.spreadsheetId) {
+          try {
+            const localSaved = localStorage.getItem(localSheetKey) || localStorage.getItem('cyberspend_active_spreadsheet_config');
+            if (localSaved) {
+              const parsed = JSON.parse(localSaved);
+              if (parsed?.spreadsheetId) {
+                activeSheet = parsed;
+                setSpreadsheetConfig(parsed);
+              }
+            }
+          } catch (e) {}
         }
 
         // If not loaded from Firestore, check local storage or create new default profile
@@ -145,10 +190,18 @@ export default function App() {
               photoURL: firebaseUser.photoURL || undefined,
               role: isAdmin ? 'admin' : 'user',
               lastActive: new Date().toISOString(),
-              spreadsheetConfig: { autoSync: true },
-              customDocumentTypes: []
+              spreadsheetConfig: activeSheet || { autoSync: true },
+              customDocumentTypes: customDocumentTypes.length > 0 ? customDocumentTypes : []
             };
           }
+        }
+
+        // Preserve active sheet in userProfile
+        if (activeSheet?.spreadsheetId) {
+          userProfile = {
+            ...userProfile,
+            spreadsheetConfig: activeSheet
+          };
         }
 
         setUser(userProfile);
@@ -295,14 +348,58 @@ export default function App() {
 
   const handleUpdateSpreadsheetConfig = async (newConfig: SpreadsheetConfig) => {
     setSpreadsheetConfig(newConfig);
-    if (user) {
+
+    // Save immediately to persistent LocalStorage
+    try {
+      localStorage.setItem('cyberspend_active_spreadsheet_config', JSON.stringify(newConfig));
+      if (user) {
+        localStorage.setItem(`cyberspend_spreadsheet_config_${user.uid}`, JSON.stringify(newConfig));
+      }
+
+      // Track recent sheets list for easy recovery
+      if (newConfig.spreadsheetId) {
+        const recentStr = localStorage.getItem('cyberspend_recent_sheets');
+        let recent: Array<{ id: string; name: string; url?: string; updated: string }> = [];
+        try {
+          if (recentStr) recent = JSON.parse(recentStr);
+        } catch (e) {}
+        recent = recent.filter(r => r.id !== newConfig.spreadsheetId);
+        recent.unshift({
+          id: newConfig.spreadsheetId,
+          name: newConfig.spreadsheetName || 'CyberSpend Financial Archive',
+          url: newConfig.spreadsheetUrl,
+          updated: new Date().toISOString()
+        });
+        localStorage.setItem('cyberspend_recent_sheets', JSON.stringify(recent.slice(0, 5)));
+      }
+    } catch (e) {
+      console.warn('LocalStorage save error:', e);
+    }
+
+    // Keep user profile state in sync
+    setUser(prev => prev ? { ...prev, spreadsheetConfig: newConfig } : null);
+
+    // Persist to Cloud Firestore user record
+    if (user && user.uid !== 'demo-guest-user') {
       try {
         await setDoc(doc(db, 'users', user.uid), {
           spreadsheetConfig: newConfig
         }, { merge: true });
       } catch (err) {
-        console.error('Error persisting spreadsheet config:', err);
+        console.error('Error persisting spreadsheet config to Firestore:', err);
       }
+    }
+
+    if (newConfig.spreadsheetId) {
+      setToast({
+        type: 'success',
+        text: `Connected to "${newConfig.spreadsheetName || 'Google Sheet'}". Future scans will stream automatically!`
+      });
+    } else {
+      setToast({
+        type: 'info',
+        text: 'Google Sheet disconnected. Receipts will be saved locally and to Cloud DB.'
+      });
     }
   };
 
@@ -578,21 +675,41 @@ export default function App() {
                 </div>
 
                 {/* Google Sheets Quick Hub Button */}
-                <button
-                  onClick={() => setShowSheetsHub(true)}
-                  className={cn(
-                    "px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 border transition-all",
-                    spreadsheetConfig.spreadsheetId
-                      ? "bg-cyberse-glow/10 text-cyberse-glow border-cyberse-glow/40 hover:bg-cyberse-glow hover:text-cyberse-bg shadow-[0_0_15px_rgba(0,242,255,0.15)]"
-                      : "bg-cyberse-darker text-cyberse-muted border-cyberse-glow/10 hover:border-cyberse-glow/40 hover:text-cyberse-text"
-                  )}
-                  title="Google Sheets Multi-Tab Sync"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span className="hidden sm:inline">
-                    {spreadsheetConfig.spreadsheetId ? 'Google Sheets' : 'Link Sheet'}
-                  </span>
-                </button>
+                {spreadsheetConfig.spreadsheetId ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setShowSheetsHub(true)}
+                      className="px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 border bg-cyberse-glow/10 text-cyberse-glow border-cyberse-glow/40 hover:bg-cyberse-glow hover:text-cyberse-bg shadow-[0_0_15px_rgba(0,242,255,0.15)] transition-all max-w-[170px] sm:max-w-[240px]"
+                      title={`Active Spreadsheet: ${spreadsheetConfig.spreadsheetName || 'CyberSpend Archive'}`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-cyberse-glow animate-pulse shrink-0" />
+                      <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                      <span className="truncate">
+                        {spreadsheetConfig.spreadsheetName || 'Connected Sheet'}
+                      </span>
+                    </button>
+                    {spreadsheetConfig.spreadsheetUrl && (
+                      <a
+                        href={spreadsheetConfig.spreadsheetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hidden sm:flex p-2 rounded-xl bg-cyberse-darker border border-cyberse-glow/20 text-cyberse-glow hover:bg-cyberse-glow hover:text-cyberse-bg transition-colors shrink-0"
+                        title="Open Google Sheet in new tab"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowSheetsHub(true)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 border bg-cyberse-darker text-cyberse-muted border-cyberse-glow/10 hover:border-cyberse-glow/40 hover:text-cyberse-text transition-all"
+                    title="Link or Create Google Sheet"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span className="hidden sm:inline">Link Sheet</span>
+                  </button>
+                )}
               </>
             )}
 
@@ -814,7 +931,13 @@ export default function App() {
                 <ReceiptUpload 
                   onProcessed={handleReceiptProcessed} 
                   documentTypes={allDocumentTypes}
+                  spreadsheetName={spreadsheetConfig.spreadsheetName}
+                  hasSpreadsheetLinked={Boolean(spreadsheetConfig.spreadsheetId)}
                   onAddDocumentType={handleAddDocumentType}
+                  onOpenSheetsHub={() => {
+                    setShowUpload(false);
+                    setShowSheetsHub(true);
+                  }}
                 />
               </div>
             ) : (
@@ -822,8 +945,13 @@ export default function App() {
                 data={pendingReceipt} 
                 documentTypes={allDocumentTypes}
                 spreadsheetName={spreadsheetConfig.spreadsheetName}
+                hasSpreadsheetLinked={Boolean(spreadsheetConfig.spreadsheetId)}
                 onConfirm={handleConfirmTransaction}
                 onCancel={() => setPendingReceipt(null)}
+                onOpenSheetsHub={() => {
+                  setPendingReceipt(null);
+                  setShowSheetsHub(true);
+                }}
               />
             )}
           </div>

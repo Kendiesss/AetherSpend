@@ -133,9 +133,10 @@ export async function createCyberSpendSpreadsheet(
  */
 export async function initializeTabHeaders(token: string, spreadsheetId: string, tabName: string) {
   const cleanId = extractSpreadsheetId(spreadsheetId);
-  const encodedTab = encodeURIComponent(tabName);
+  const safeRange = `'${tabName.replace(/'/g, "''")}'!A1:H1`;
+  const encodedRange = encodeURIComponent(safeRange);
   
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/'${encodedTab}'!A1:H1?valueInputOption=USER_ENTERED`, {
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodedRange}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -222,11 +223,12 @@ export async function appendTransactionToSheet(
   // Make sure tab exists with headers
   await ensureSheetTabExists(token, cleanId, tabName);
 
-  const encodedTab = encodeURIComponent(tabName);
+  const safeRange = `'${tabName.replace(/'/g, "''")}'!A:H`;
+  const encodedRange = encodeURIComponent(safeRange);
   const rowValues = [formatTransactionRow(transaction, tabName)];
 
   const appendRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/'${encodedTab}'!A:H:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodedRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     {
       method: 'POST',
       headers: {
@@ -275,11 +277,12 @@ export async function syncAllTransactionsToSheet(
   for (const [tabName, txList] of Object.entries(grouped)) {
     try {
       await ensureSheetTabExists(token, cleanId, tabName);
-      const encodedTab = encodeURIComponent(tabName);
+      const safeRange = `'${tabName.replace(/'/g, "''")}'!A:H`;
+      const encodedRange = encodeURIComponent(safeRange);
       const rows = txList.map(tx => formatTransactionRow(tx, tabName));
 
       const appendRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/'${encodedTab}'!A:H:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodedRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         {
           method: 'POST',
           headers: {

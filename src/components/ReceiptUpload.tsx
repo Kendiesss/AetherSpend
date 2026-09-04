@@ -9,13 +9,19 @@ import CameraCapture from './CameraCapture';
 interface ReceiptUploadProps {
   onProcessed: (data: ReceiptData) => void;
   documentTypes?: string[];
+  spreadsheetName?: string;
+  hasSpreadsheetLinked?: boolean;
   onAddDocumentType?: (type: string) => Promise<void>;
+  onOpenSheetsHub?: () => void;
 }
 
 export default function ReceiptUpload({ 
   onProcessed,
   documentTypes = DEFAULT_DOCUMENT_TYPES,
-  onAddDocumentType
+  spreadsheetName,
+  hasSpreadsheetLinked = false,
+  onAddDocumentType,
+  onOpenSheetsHub
 }: ReceiptUploadProps) {
   const [selectedType, setSelectedType] = useState<string>(documentTypes[0] || 'Official Receipt (OR)');
   const [isAddingType, setIsAddingType] = useState(false);
@@ -87,6 +93,35 @@ export default function ReceiptUpload({
 
   return (
     <div className="w-full max-w-xl mx-auto space-y-6">
+      {/* Active Spreadsheet Status */}
+      {hasSpreadsheetLinked ? (
+        <div className="bg-cyberse-darker/90 border border-cyberse-glow/30 rounded-xl px-3.5 py-2.5 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2 text-cyberse-muted">
+            <span className="w-2 h-2 rounded-full bg-cyberse-glow animate-pulse" />
+            <span className="font-bold uppercase tracking-wider text-[11px]">Forwarding To:</span>
+            <span className="text-cyberse-glow font-bold truncate max-w-[180px]">{spreadsheetName || 'CyberSpend Archive'}</span>
+          </div>
+          <span className="text-cyberse-text font-mono text-[11px] bg-cyberse-glow/10 px-2 py-0.5 rounded border border-cyberse-glow/20">
+            Tab: "{selectedType}"
+          </span>
+        </div>
+      ) : (
+        <div className="bg-cyberse-darker/70 border border-cyberse-purple/20 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
+          <span className="text-cyberse-purple font-medium text-[11px]">
+            No Google Sheet connected (Receipts save to Cloud DB)
+          </span>
+          {onOpenSheetsHub && (
+            <button
+              type="button"
+              onClick={onOpenSheetsHub}
+              className="text-cyberse-glow hover:underline text-[10px] font-black uppercase tracking-wider"
+            >
+              Link Sheet ↗
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Document Type Selection Protocol */}
       <div className="bg-cyberse-darker/70 p-4 rounded-2xl border border-cyberse-glow/20 space-y-3">
         <div className="flex items-center justify-between">

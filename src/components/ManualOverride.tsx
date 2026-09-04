@@ -7,8 +7,10 @@ interface ManualOverrideProps {
   data: ReceiptData;
   documentTypes?: string[];
   spreadsheetName?: string;
+  hasSpreadsheetLinked?: boolean;
   onConfirm: (data: ReceiptData) => void;
   onCancel: () => void;
+  onOpenSheetsHub?: () => void;
 }
 
 const categories: Category[] = ["Groceries", "Dining", "Utilities", "Transport", "Health", "Shopping", "Entertainment", "Misc"];
@@ -17,8 +19,10 @@ export default function ManualOverride({
   data, 
   documentTypes = DEFAULT_DOCUMENT_TYPES,
   spreadsheetName,
+  hasSpreadsheetLinked = true,
   onConfirm, 
-  onCancel 
+  onCancel,
+  onOpenSheetsHub
 }: ManualOverrideProps) {
   const [editedData, setEditedData] = useState<ReceiptData>({
     ...data,
@@ -50,18 +54,38 @@ export default function ManualOverride({
 
       <div className="p-8 space-y-6">
         {/* Destination Tab Pill */}
-        <div className="bg-cyberse-darker/90 border border-cyberse-glow/20 rounded-xl p-3 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2 text-cyberse-muted">
-            <FileSpreadsheet className="w-4 h-4 text-cyberse-glow" />
-            <span className="font-bold uppercase tracking-wider">Target Sheet Tab:</span>
+        {hasSpreadsheetLinked ? (
+          <div className="bg-cyberse-darker/90 border border-cyberse-glow/20 rounded-xl p-3 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 text-cyberse-muted">
+              <span className="w-2 h-2 rounded-full bg-cyberse-glow animate-pulse" />
+              <FileSpreadsheet className="w-4 h-4 text-cyberse-glow" />
+              <span className="font-bold uppercase tracking-wider">Live Streaming Destination:</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-mono text-right">
+              <span className="text-cyberse-muted truncate max-w-[150px]">{spreadsheetName || 'CyberSpend Archive'} &gt;</span>
+              <span className="text-cyberse-glow font-black bg-cyberse-glow/10 px-2 py-0.5 rounded border border-cyberse-glow/30 whitespace-nowrap">
+                Tab: "{editedData.documentType}"
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 font-mono">
-            <span className="text-cyberse-muted">{spreadsheetName || 'Connected Sheet'} &gt;</span>
-            <span className="text-cyberse-glow font-black bg-cyberse-glow/10 px-2 py-0.5 rounded border border-cyberse-glow/30">
-              '{editedData.documentType}'
-            </span>
+        ) : (
+          <div className="bg-cyberse-darker/70 border border-cyberse-purple/30 rounded-xl p-3 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 text-cyberse-muted">
+              <FileSpreadsheet className="w-4 h-4 text-cyberse-purple" />
+              <span className="font-bold uppercase tracking-wider text-cyberse-purple">Storage Mode:</span>
+              <span className="text-cyberse-muted">Saved to Cloud DB & Local</span>
+            </div>
+            {onOpenSheetsHub && (
+              <button
+                type="button"
+                onClick={onOpenSheetsHub}
+                className="text-[10px] font-black uppercase tracking-wider bg-cyberse-purple/20 hover:bg-cyberse-purple text-white px-2.5 py-1 rounded-lg transition-all"
+              >
+                Link Sheet
+              </button>
+            )}
           </div>
-        </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Document Classification */}
@@ -146,7 +170,7 @@ export default function ManualOverride({
             className="flex-1 bg-cyberse-glow text-cyberse-bg py-4 rounded-xl font-black hover:bg-white transition-all shadow-[0_0_20px_rgba(0,242,255,0.3)] flex items-center justify-center gap-2 uppercase tracking-widest text-sm active:scale-[0.99]"
           >
             <Check className="w-5 h-5" />
-            Commit & Stream to Sheet
+            {hasSpreadsheetLinked ? 'Commit & Stream to Sheet' : 'Commit & Archive Record'}
           </button>
           <button
             onClick={onCancel}
