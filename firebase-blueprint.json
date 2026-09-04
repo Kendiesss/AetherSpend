@@ -10,7 +10,9 @@
         "displayName": { "type": "string", "description": "User display name" },
         "photoURL": { "type": "string", "format": "uri", "description": "User profile photo URL" },
         "role": { "type": "string", "enum": ["admin", "user"], "description": "User role" },
-        "lastActive": { "type": "string", "format": "date-time", "description": "Last time the user was active" }
+        "lastActive": { "type": "string", "format": "date-time", "description": "Last time the user was active" },
+        "spreadsheetConfig": { "type": "object", "description": "User Google Sheet connection configuration" },
+        "customDocumentTypes": { "type": "array", "items": { "type": "string" }, "description": "Custom document receipt types" }
       },
       "required": ["uid", "email"]
     },
@@ -24,9 +26,12 @@
         "merchant": { "type": "string", "description": "Name of the merchant" },
         "amount": { "type": "number", "description": "Total transaction amount" },
         "category": { "type": "string", "enum": ["Groceries", "Dining", "Utilities", "Transport", "Health", "Shopping", "Entertainment", "Misc"], "description": "Spending category" },
+        "documentType": { "type": "string", "description": "Document type category (e.g. Official Receipt, Sales Invoice)" },
         "date": { "type": "string", "format": "date-time", "description": "Transaction date" },
         "imageUrl": { "type": "string", "format": "uri", "description": "Optional receipt image URL" },
-        "createdAt": { "type": "string", "format": "date-time", "description": "When the transaction was created" }
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the transaction was created" },
+        "syncedToSheets": { "type": "boolean", "description": "Whether the record was synced to Google Sheets" },
+        "sheetRowIndex": { "type": "number", "description": "Row index in connected Google Sheet" }
       },
       "required": ["id", "userId", "merchant", "amount", "category", "date", "createdAt"]
     }

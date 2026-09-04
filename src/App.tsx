@@ -374,14 +374,25 @@ export default function App() {
 
     const docType = data.documentType || allDocumentTypes[0] || 'Official Receipt (OR)';
     const transactionId = Math.random().toString(36).substr(2, 9);
+    
+    let formattedDate = new Date().toISOString();
+    try {
+      if (data.date) {
+        const parsed = new Date(data.date);
+        if (!isNaN(parsed.getTime())) {
+          formattedDate = parsed.toISOString();
+        }
+      }
+    } catch (e) {}
+
     const newTransaction: Transaction = {
       id: transactionId,
       userId: user.uid,
-      merchant: data.merchant,
-      amount: data.amount,
-      category: data.category,
+      merchant: data.merchant || 'Unknown Merchant',
+      amount: typeof data.amount === 'number' ? data.amount : (parseFloat(String(data.amount)) || 0),
+      category: data.category || 'Misc',
       documentType: docType,
-      date: new Date(data.date).toISOString(),
+      date: formattedDate,
       createdAt: new Date().toISOString()
     };
 
@@ -445,7 +456,12 @@ export default function App() {
             : 'Transaction archived successfully.'
         });
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Commit failed:', error);
+      setToast({
+        type: 'info',
+        text: `Transaction save failed: ${error?.message || 'Database write denied'}`
+      });
       handleFirestoreError(error, OperationType.WRITE, `transactions/${transactionId}`);
     }
   };

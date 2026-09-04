@@ -50,7 +50,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
          (request.auth.token.email == "jkenangeles9@gmail.com" && request.auth.token.email_verified == true));
     }
 
@@ -75,26 +76,31 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role', 'lastActive']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role', 'lastActive', 'spreadsheetConfig', 'customDocumentTypes']) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
              isValidEmail(data.email) &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 256)) &&
              (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1024)) &&
              (data.role == 'user' || data.role == 'admin') &&
-             (!('lastActive' in data) || isValidDateString(data.lastActive));
+             (!('lastActive' in data) || isValidDateString(data.lastActive)) &&
+             (!('spreadsheetConfig' in data) || data.spreadsheetConfig is map) &&
+             (!('customDocumentTypes' in data) || data.customDocumentTypes is list);
     }
 
     function isValidTransaction(data) {
       let categories = ["Groceries", "Dining", "Utilities", "Transport", "Health", "Shopping", "Entertainment", "Misc"];
-      return hasOnlyAllowedFields(['id', 'userId', 'merchant', 'amount', 'category', 'date', 'imageUrl', 'createdAt']) &&
+      return hasOnlyAllowedFields(['id', 'userId', 'merchant', 'amount', 'category', 'documentType', 'date', 'imageUrl', 'createdAt', 'syncedToSheets', 'sheetRowIndex']) &&
              data.id is string && data.id.size() > 0 && data.id.size() < 128 &&
              data.userId is string && data.userId == request.auth.uid &&
              data.merchant is string && data.merchant.size() > 0 && data.merchant.size() < 256 &&
              data.amount is number && data.amount >= 0 &&
-             data.category in categories &&
+             (data.category in categories || (data.category is string && data.category.size() > 0 && data.category.size() < 64)) &&
+             (!('documentType' in data) || (data.documentType is string && data.documentType.size() < 128)) &&
              isValidDateString(data.date) &&
              isValidDateString(data.createdAt) &&
-             (!('imageUrl' in data) || (data.imageUrl is string && isValidUrl(data.imageUrl)));
+             (!('imageUrl' in data) || (data.imageUrl is string && isValidUrl(data.imageUrl))) &&
+             (!('syncedToSheets' in data) || data.syncedToSheets is bool) &&
+             (!('sheetRowIndex' in data) || (data.sheetRowIndex is number && data.sheetRowIndex >= 0));
     }
 
     // ===============================================================
@@ -103,8 +109,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'user' || (request.auth.token.email == "jkenangeles9@gmail.com" && request.resource.data.role == 'admin'));
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role == resource.data.role || isAdmin());
       allow delete: if isAdmin();
     }
 
